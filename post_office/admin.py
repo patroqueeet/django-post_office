@@ -87,10 +87,10 @@ def requeue(modeladmin, request, queryset):
 requeue.short_description = "Requeue selected emails"
 
 
-@admin.register(Email)
+# @admin.register(Email)
 class EmailAdmin(admin.ModelAdmin):
     list_display = [
-        "id",
+        "truncated_message_id",
         "to_display",
         "shortened_subject",
         "status",
@@ -99,7 +99,12 @@ class EmailAdmin(admin.ModelAdmin):
         "use_template",
     ]
     search_fields = ["to", "subject"]
-    readonly_fields = ["render_subject", "render_plaintext_body", "render_html_body"]
+    readonly_fields = [
+        "message_id",
+        "render_subject",
+        "render_plaintext_body",
+        "render_html_body",
+    ]
     date_hierarchy = "last_updated"
     inlines = [AttachmentInline, LogInline]
     list_filter = ["status", "template__language", "template__name"]
@@ -125,8 +130,14 @@ class EmailAdmin(admin.ModelAdmin):
     def to_display(self, instance):
         return ", ".join(instance.to)
 
+    def truncated_message_id(self, instance):
+        if instance.message_id:
+            return Truncator(instance.message_id[1:-1]).chars(10)
+        return str(instance.id)
+
     to_display.short_description = _("To")
     to_display.admin_order_field = "to"
+    truncated_message_id.short_description = "Message-ID"
 
     def has_add_permission(self, request):
         return False
@@ -154,21 +165,17 @@ class EmailAdmin(admin.ModelAdmin):
     use_template.boolean = True
 
     def get_fieldsets(self, request, obj=None):
-        fieldsets = [
-            (
-                None,
-                {
-                    "fields": [
-                        "from_email",
-                        "to",
-                        "cc",
-                        "bcc",
-                        "priority",
-                        ("status", "scheduled_time"),
-                    ],
-                },
-            ),
+        fields = [
+            "from_email",
+            "to",
+            "cc",
+            "bcc",
+            "priority",
+            ("status", "scheduled_time"),
         ]
+        if obj.message_id:
+            fields.insert(0, "message_id")
+        fieldsets = [(None, {"fields": fields})]
         has_plaintext_content, has_html_content = False, False
         for part in obj.email_message().message().walk():
             if not isinstance(part, SafeMIMEText):
@@ -247,7 +254,7 @@ class EmailAdmin(admin.ModelAdmin):
         return HttpResponseNotFound()
 
 
-@admin.register(Log)
+# @admin.register(Log)
 class LogAdmin(admin.ModelAdmin):
     list_display = ("date", "email", "status", get_message_preview)
 
@@ -319,7 +326,7 @@ class EmailTemplateInline(admin.StackedInline):
         return len(settings.LANGUAGES)
 
 
-@admin.register(EmailTemplate)
+# @admin.register(EmailTemplate)
 class EmailTemplateAdmin(admin.ModelAdmin):
     form = EmailTemplateAdminForm
     list_display = (
@@ -362,7 +369,13 @@ class EmailTemplateAdmin(admin.ModelAdmin):
             obj.translated_templates.update(name=obj.name)
 
 
-@admin.register(Attachment)
+# @admin.register(Attachment)
 class AttachmentAdmin(admin.ModelAdmin):
     list_display = ["name", "file"]
     filter_horizontal = ["emails"]
+
+
+admin.site.register(Email, EmailAdmin)
+admin.site.register(Log, LogAdmin)
+admin.site.register(EmailTemplate, EmailTemplateAdmin)
+admin.site.register(Attachment, AttachmentAdmin)
