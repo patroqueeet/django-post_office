@@ -13,6 +13,7 @@ from django.utils.translation import pgettext_lazy
 from jsonfield import JSONField
 from post_office import cache
 from post_office.fields import CommaSeparatedEmailField
+from post_office.signals import email_sent
 
 from .connections import connections
 from .logutils import setup_loghandlers
@@ -228,6 +229,7 @@ class Email(models.Model):
             status = STATUS.sent
             message = ""
             exception_type = ""
+            email_sent.send(sender=Email, emails=[self])
         except Exception as e:
             status = STATUS.failed
             message = str(e)
