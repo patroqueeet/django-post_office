@@ -2,16 +2,19 @@ import re
 
 from django import forms
 from django.conf import settings
-from django.conf.urls import re_path
-from django.contrib import admin
+from django.contrib import admin, messages
 from django.core.exceptions import ValidationError
 from django.core.mail.message import SafeMIMEText
 from django.db import models
 from django.forms import BaseInlineFormSet
 from django.forms.widgets import TextInput
-from django.http.response import HttpResponse, HttpResponseNotFound
+from django.http.response import (
+    HttpResponse,
+    HttpResponseNotFound,
+    HttpResponseRedirect,
+)
 from django.template import Context, Template
-from django.urls import reverse
+from django.urls import re_path, reverse
 from django.utils.html import format_html
 from django.utils.text import Truncator
 from django.utils.translation import gettext_lazy as _
@@ -87,7 +90,6 @@ def requeue(modeladmin, request, queryset):
 requeue.short_description = "Requeue selected emails"
 
 
-# @admin.register(Email)
 class EmailAdmin(admin.ModelAdmin):
     list_display = [
         "truncated_message_id",
@@ -120,6 +122,7 @@ class EmailAdmin(admin.ModelAdmin):
                 self.fetch_email_image,
                 name="post_office_email_image",
             ),
+            re_path(r"^(?P<pk>\d+)/resend/$", self.resend, name="resend"),
         ]
         urls.extend(super().get_urls())
         return urls
@@ -253,8 +256,15 @@ class EmailAdmin(admin.ModelAdmin):
                 )
         return HttpResponseNotFound()
 
+    def resend(self, request, pk):
+        instance = self.get_object(request, pk)
+        instance.dispatch()
+        messages.info(request, "Email has been sent again")
+        return HttpResponseRedirect(
+            reverse("admin:post_office_email_change", args=[instance.pk])
+        )
 
-# @admin.register(Log)
+
 class LogAdmin(admin.ModelAdmin):
     list_display = ("date", "email", "status", get_message_preview)
 
@@ -326,7 +336,6 @@ class EmailTemplateInline(admin.StackedInline):
         return len(settings.LANGUAGES)
 
 
-# @admin.register(EmailTemplate)
 class EmailTemplateAdmin(admin.ModelAdmin):
     form = EmailTemplateAdminForm
     list_display = (
@@ -369,7 +378,6 @@ class EmailTemplateAdmin(admin.ModelAdmin):
             obj.translated_templates.update(name=obj.name)
 
 
-# @admin.register(Attachment)
 class AttachmentAdmin(admin.ModelAdmin):
     list_display = ["name", "file"]
     filter_horizontal = ["emails"]

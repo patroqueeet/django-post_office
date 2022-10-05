@@ -10,6 +10,7 @@ from django.template import Context, Template
 from django.utils import timezone
 
 from .connections import connections
+from .lockfile import FileLock, FileLocked, default_lockfile
 from .logutils import setup_loghandlers
 from .models import PRIORITY, STATUS, Email, EmailTemplate, Log
 from .settings import (
@@ -118,6 +119,7 @@ def create(
             priority=priority,
             status=status,
             backend_alias=backend,
+            template=template,
         )
 
     if commit:
@@ -246,7 +248,7 @@ def send_many(kwargs_list):
 
 def get_queued():
     """
-    Returns a list of emails that should be sent fulfilling these conditions:
+    Returns the queryset of emails eligible for sending – fulfilling these conditions:
      - Status is queued or requeued
      - Has scheduled_time before the current time or is None
      - Has expires_at after the current time or is None
@@ -335,7 +337,7 @@ def _send_bulk(emails, uses_multiprocessing=True, log_level=None):
             sent_emails.append(email)
             logger.debug("Successfully sent email #%d" % email.id)
         except Exception as e:
-            logger.debug("Failed to send email #%d" % email.id)
+            logger.exception("Failed to send email #%d" % email.id)
             failed_emails.append((email, e))
 
     # Prepare emails before we send these to threads for sending
@@ -346,6 +348,7 @@ def _send_bulk(emails, uses_multiprocessing=True, log_level=None):
         try:
             email.prepare_email_message()
         except Exception as e:
+            logger.exception("Failed to prepare email #%d" % email.id)
             failed_emails.append((email, e))
 
     if uses_multiprocessing:
@@ -422,3 +425,26 @@ def _send_bulk(emails, uses_multiprocessing=True, log_level=None):
     )
 
     return len(sent_emails), num_failed, num_requeued
+
+
+def send_queued_mail_until_done(lockfile=default_lockfile, processes=1, log_level=None):
+    """
+    Send mail in queue batch by batch, until all emails have been processed.
+    """
+    try:
+        with FileLock(lockfile):
+            logger.info("Acquired lock for sending queued emails at %s.lock", lockfile)
+            while True:
+                try:
+                    send_queued(processes, log_level)
+                except Exception as e:
+                    logger.exception(e, extra={"status_code": 500})
+                    raise
+
+                # Close DB connection to avoid multiprocessing errors
+                db_connection.close()
+
+                if not get_queued().exists():
+                    break
+    except FileLocked:
+        logger.info("Failed to acquire lock, terminating now.")
