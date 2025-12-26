@@ -18,12 +18,7 @@ Django. Some awesome features are:
 ## Dependencies
 
 -   [django \>= 4.2](https://djangoproject.com/)
--   [jsonfield](https://github.com/rpkilby/jsonfield)
--   [bleach](https://bleach.readthedocs.io/)
-
-With this optional dependency, HTML emails are nicely rendered
-inside the Django admin backend. Without this library, all HTML tags
-will otherwise be stripped for security reasons.
+-   [nh3](https://nh3.readthedocs.io/) - HTML sanitization library for rendering HTML emails safely in Django admin
 
 ## Installation
 
@@ -723,7 +718,8 @@ Attachments are not supported with `mail.send_many()`.
 To run the test suite:
 
 ```sh
-`which django-admin` test post_office --settings=post_office.test_settings --pythonpath=.
+pip install -e ".[test]"
+pytest
 ```
 
 You can run the full test suite for all supported versions of Django and Python with:
@@ -735,7 +731,7 @@ tox
 or:
 
 ```sh
-python setup.py test
+pytest
 ```
 
 
