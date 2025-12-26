@@ -1,16 +1,114 @@
 from __future__ import annotations
 
+import base64
 import json
 import logging
 from datetime import datetime
+from functools import lru_cache
+from urllib.parse import urlparse
+from urllib.request import urlopen
 
 from django.http import HttpRequest, HttpResponse, JsonResponse
 
 from post_office.models import RecipientDeliveryStatus
+from post_office.settings import get_webhook_config
 from post_office.webhooks.base import BaseWebhookHandler, ESPEvent
 
 logger = logging.getLogger(__name__)
 
+try:
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import padding
+except ImportError:  # pragma: no cover - optional dependency
+    x509 = None
+    hashes = None
+    padding = None
+
+
+def _is_valid_cert_url(cert_url: str) -> bool:
+    try:
+        parsed = urlparse(cert_url)
+    except Exception:
+        return False
+
+    if parsed.scheme != 'https':
+        return False
+
+    host = parsed.netloc.lower()
+    if not host.endswith('.amazonaws.com'):
+        return False
+
+    return parsed.path.endswith('.pem')
+
+
+@lru_cache(maxsize=128)
+def _get_aws_certificate(cert_url: str):
+    if not _is_valid_cert_url(cert_url):
+        raise ValueError(f'Invalid SNS SigningCertURL: {cert_url}')
+
+    try:
+        with urlopen(cert_url, timeout=5) as response:
+            cert_pem = response.read()
+    except Exception as exc:
+        raise RuntimeError('Failed to fetch SNS SigningCertURL') from exc
+
+    try:
+        certificate = x509.load_pem_x509_certificate(cert_pem)
+    except Exception as exc:
+        raise RuntimeError('Failed to load SNS signing certificate') from exc
+
+    return certificate.public_key()
+
+
+def verify_ses_signature(payload: dict) -> bool:
+    """
+    Returns True if valid, False if invalid. Logs errors instead of raising.
+    """
+    try:
+        cert_url = payload.get('SigningCertURL')
+        if not cert_url:
+            logger.error('SES Webhook: No SigningCertURL')
+            return False
+
+        signature_version = payload.get('SignatureVersion')
+        if not signature_version:
+            logger.error('SES Webhook: No SignatureVersion')
+            return False
+
+        if signature_version == '1':
+            hash_alg = hashes.SHA1()
+        elif signature_version == '2':
+            hash_alg = hashes.SHA256()
+        else:
+            logger.warning('SES Webhook: Unsupported SignatureVersion %s', signature_version)
+            return False
+
+        public_key = _get_aws_certificate(cert_url)
+
+        msg_type = payload.get('Type')
+        fields = []
+        if msg_type == 'Notification':
+            fields = ['Message', 'MessageId', 'Subject', 'Timestamp', 'TopicArn', 'Type']
+        elif msg_type in ('SubscriptionConfirmation', 'UnsubscribeConfirmation'):
+            fields = ['Message', 'MessageId', 'SubscribeURL', 'Timestamp', 'Token', 'TopicArn', 'Type']
+
+        string_to_sign = ''.join(f'{key}\n{payload[key]}\n' for key in fields if key in payload)
+        if not string_to_sign:
+            logger.error('SES Webhook: Unable to build string-to-sign')
+            return False
+
+        signature = base64.b64decode(payload.get('Signature', ''))
+        public_key.verify(
+            signature,
+            string_to_sign.encode('utf-8'),
+            padding.PKCS1v15(),
+            hash_alg,
+        )
+        return True
+    except Exception as exc:
+        logger.warning('SES Signature Verification Failed: %s', exc)
+        return False
 
 class SESWebhookHandler(BaseWebhookHandler):
     """
@@ -48,11 +146,28 @@ class SESWebhookHandler(BaseWebhookHandler):
     def verify_signature(self, request: HttpRequest) -> bool:
         """
         Verify AWS SNS message signature using X.509 certificate.
-
-        TODO: Implement in Stage 4
         """
-        # Placeholder - will be implemented in signature verification stage
-        return True
+        config = get_webhook_config('SES')
+        if not config.get('VERIFY_SIGNATURE', True):
+            return True
+
+        if x509 is None:
+            raise RuntimeError('cryptography is required for SES signature verification')
+
+        try:
+            payload = json.loads(request.body)
+        except json.JSONDecodeError:
+            logger.warning('Invalid JSON payload for SES signature verification')
+            return False
+
+        signature = payload.get('Signature')
+        cert_url = payload.get('SigningCertURL')
+
+        if not signature or not cert_url:
+            logger.warning('SNS signature fields missing from payload')
+            return False
+
+        return verify_ses_signature(payload)
 
     def post(self, request: HttpRequest) -> HttpResponse:
         """Handle incoming SNS POST request, including subscription confirmation."""
@@ -103,6 +218,7 @@ class SESWebhookHandler(BaseWebhookHandler):
                 'subscribe_url': subscribe_url,
             }
         )
+
 
     def _handle_notification(self, payload: dict) -> HttpResponse:
         """Handle SNS notification containing SES event."""

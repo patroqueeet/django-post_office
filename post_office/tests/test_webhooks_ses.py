@@ -1,7 +1,7 @@
 import json
 from datetime import datetime, timezone
 
-from django.test import RequestFactory, TestCase
+from django.test import RequestFactory, TestCase, override_settings
 
 from post_office.models import RecipientDeliveryStatus
 from post_office.webhooks.ses import SESWebhookHandler
@@ -130,6 +130,7 @@ class SESWebhookHandlerTest(TestCase):
         self.assertEqual(events[0].raw_event, 'Complaint')
         self.assertEqual(events[0].delivery_status, RecipientDeliveryStatus.SPAM_COMPLAINT)
 
+    @override_settings(POST_OFFICE={'WEBHOOKS': {'SES': {'VERIFY_SIGNATURE': False}}})
     def test_parse_subscription_confirmation(self):
         """Test handling SNS subscription confirmation."""
         payload = {

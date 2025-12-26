@@ -408,6 +408,66 @@ You may want to set these up via cron to run regularly:
 This section outlines all the settings and configurations that you can
 put in Django's `settings.py` to fine tune `post-office`'s behavior.
 
+### Webhook Handlers
+
+`post_office` ships with base webhook handlers you can subclass to handle ESP callbacks.
+Each handler parses provider payloads into a list of `ESPEvent` objects and then calls
+`handle_events()` so you can implement your own persistence logic.
+
+`ESPEvent` fields:
+
+```python
+ESPEvent(
+    raw_event='delivered',                 # raw ESP event name
+    delivery_status=RecipientDeliveryStatus.DELIVERED,
+    recipient='user@example.com',          # recipient email
+    message_id='<abc123@example.com>',     # message-id header or provider id
+    timestamp=timezone.now(),              # datetime if available
+    subject='Hello',                       # subject if provided
+    to_addresses=['a@example.com'],        # all recipients if provided
+)
+```
+
+To implement your own handler, subclass the provider handler and override `handle_events()`.
+
+```python
+from django.urls import path
+from post_office.webhooks.base import ESPEvent
+from post_office.webhooks.ses import SESWebhookHandler
+
+
+class MySESWebhookHandler(SESWebhookHandler):
+    def handle_events(self, events: list[ESPEvent], payload):
+        for event in events:
+            # Add your own persistence logic here.
+            # Example: update Email by message_id or subject.
+            pass
+
+
+urlpatterns = [
+    path('webhooks/ses/', MySESWebhookHandler.as_view(), name='ses-webhook'),
+]
+```
+
+Configure webhook settings in `POST_OFFICE`:
+
+```python
+POST_OFFICE = {
+    'WEBHOOKS': {
+        'SES': {
+            'VERIFY_SIGNATURE': True,  # default, requires cryptography
+        },
+    },
+}
+```
+
+Signature verification uses the SNS `SigningCertURL` and requires the `cryptography`
+package. If you want to skip signature verification (for local development only),
+set `VERIFY_SIGNATURE` to `False`.
+
+The handler also recognizes SNS subscription confirmations; you should visit the
+`SubscribeURL` from AWS to complete the subscription.
+
 
 ### File Storage
 
