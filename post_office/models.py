@@ -35,6 +35,7 @@ class RecipientDeliveryStatus(models.IntegerChoices):
 
     DEFERRED = 50, _('Deferred')
     SOFT_BOUNCED = 60, _('Soft Bounced')
+    UNDETERMINED_BOUNCED = 65, _('Undetermined Bounced')
     HARD_BOUNCED = 70, _('Hard Bounced')
 
     SPAM_COMPLAINT = 80, _('Spam Complaint')

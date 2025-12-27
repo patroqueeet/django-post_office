@@ -26,9 +26,10 @@ STATUS_PRIORITY: dict[RecipientDeliveryStatus, int] = {
     RecipientDeliveryStatus.ACCEPTED: 4,
     RecipientDeliveryStatus.DEFERRED: 5,
     RecipientDeliveryStatus.SOFT_BOUNCED: 6,
-    RecipientDeliveryStatus.HARD_BOUNCED: 7,
-    RecipientDeliveryStatus.UNSUBSCRIBED: 8,
-    RecipientDeliveryStatus.SPAM_COMPLAINT: 9,
+    RecipientDeliveryStatus.UNDETERMINED_BOUNCED: 7,
+    RecipientDeliveryStatus.HARD_BOUNCED: 8,
+    RecipientDeliveryStatus.UNSUBSCRIBED: 9,
+    RecipientDeliveryStatus.SPAM_COMPLAINT: 10,
 }
 
 
