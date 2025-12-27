@@ -298,6 +298,8 @@ class SESWebhookHandler(BaseWebhookHandler):
 
             if bounce_type == 'Transient':
                 status = RecipientDeliveryStatus.SOFT_BOUNCED
+            elif bounce_type == 'Undetermined':
+                status = RecipientDeliveryStatus.UNDETERMINED_BOUNCED
             else:
                 status = RecipientDeliveryStatus.HARD_BOUNCED
 
