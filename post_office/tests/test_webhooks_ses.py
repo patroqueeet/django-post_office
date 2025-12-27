@@ -2,9 +2,15 @@ import json
 from datetime import datetime, timezone
 
 from django.test import RequestFactory, TestCase, override_settings
+from unittest import mock
+
+try:
+    from cryptography.hazmat.primitives import serialization
+except ImportError:  # pragma: no cover - optional dependency
+    serialization = None
 
 from post_office.models import RecipientDeliveryStatus
-from post_office.webhooks.ses import SESWebhookHandler
+from post_office.webhooks.ses import SESWebhookHandler, verify_ses_signature
 
 
 class SESWebhookHandlerTest(TestCase):
@@ -156,6 +162,68 @@ class SESWebhookHandlerTest(TestCase):
         events = self.handler.parse_events(request)
         self.assertEqual(len(events), 0)
 
+
+@mock.patch('post_office.webhooks.ses._get_aws_certificate')
+class SESSignatureVerificationTest(TestCase):
+    """Sanity checks for SES signature verification."""
+
+    PUBLIC_KEY_PEM = (
+        '-----BEGIN PUBLIC KEY-----\n'
+        'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqPgA9zEJUzmT3m4r8/AR\n'
+        '+KuWX0ZJX0Bqn5vrPm9SwJ0u1TksrfM5VYqMMk6xj9adPBPdZkZvM6ZaD0R55VnL\n'
+        'NpL/kvV5lfVs8Z24PDddscHf3H6Xm5tGcvlFgKjNvqkqsXFBBn6kSMg+co0qKSxm\n'
+        'NddvRyLwb0mBZOydWDuYN60all9hHWRoEgdgMxQkzVl4dvprTVN7RISiDV/VdXAX\n'
+        'fqcbpY/r4Cw5sqSiU6X1s0VOcLEx66cBcB8ytbZPj3GF0szbfAznninusR6fJoDP\n'
+        'x98f69MyNh7Z3RY1s5JcUtnPtxTCVNdrlLriEy+0mY7UuYlft8la7HUhCoK3r27i\n'
+        'hwIDAQAB\n'
+        '-----END PUBLIC KEY-----\n'
+    )
+    SIGNATURE_V1 = (
+        'FtDWpJjF7n6p8mljZsWbxdEK/cNRmONTdFmw89mSKPv4u8GMcBWNLv4qwXDxd5Xh1OwwrCkL'
+        'BIt9t/kVAdSAsj1wqSPPcOrh+H3O3ElX/qqQu8qg2hZpE7Pu0q6vFOlHnoPRkwug2RvkLd3'
+        'nYKhGBJ0/eRXqgZhsWhI8XnZmnBUWrtfA6yY1xF2BHZHs0t9VmlN4nemTEgcLir1gjKiynh'
+        'Qwv0JED7vKZwJG9BvGn2H7DOdmZNdUBkNlr+Q3P1HnABSV8hnUnt50Y1VprLZk7siJkFJJK'
+        '7z48OAQi4itFRCL5dH3t78+V5EOQkJ/DhnNWQQCLNx48Ad/XQLLjF8OfA=='
+    )
+    SIGNATURE_V2 = (
+        'QV+fkjUjIVAHE7bi+d2PM21GVCZBkNsKUcrQAFlZRs6MOlZwKkhX0C+0emHwCAURBEU6Rd/h'
+        'JQOU2/Lm+tbV+4V1SJf29UpnOBS/NKK3cwFR6ffH/wObTK2a3kGETw58Tc5SC2LHdTXrbmv'
+        '/QJBESSKRyDewAnvwxmeP18sxTjILYYSnU2AWED06GOyuGAQF3aF06JUuRqadzxYX6m3Ziw'
+        'c5sMN/7zeMkeLbJecu1Ak1gBWSHe4Gvyqk+iMekPnVVzRlJ2Ba0zSU5XIkfRHjOypQj7yHF'
+        'l6Gw0YDLW0idRLNKcBzdezvFUR7r8KmO/zAdOgjshR67bFT63ODIqMPqA=='
+    )
+
+    def setUp(self):
+        if serialization is None:
+            self.skipTest('cryptography is required for SES signature tests')
+
+        self.public_key = serialization.load_pem_public_key(self.PUBLIC_KEY_PEM.encode('ascii'))
+
+    def _build_payload(self, signature_version, signature):
+        return {
+            'Type': 'Notification',
+            'Message': 'Hello',
+            'MessageId': 'mid-1',
+            'Timestamp': '2024-01-01T00:00:00Z',
+            'TopicArn': 'arn:aws:sns:us-east-1:123456789:ses-notifications',
+            'SigningCertURL': 'https://sns.us-east-1.amazonaws.com/cert.pem',
+            'SignatureVersion': signature_version,
+            'Signature': signature,
+        }
+
+    def test_verify_signature_version_1(self, mocked_cert):
+        mocked_cert.return_value = self.public_key
+        payload = self._build_payload('1', self.SIGNATURE_V1)
+
+        self.assertTrue(verify_ses_signature(payload))
+
+    def test_verify_signature_version_2_fails_on_mismatch(self, mocked_cert):
+        mocked_cert.return_value = self.public_key
+        payload = self._build_payload('2', self.SIGNATURE_V2)
+
+        self.assertTrue(verify_ses_signature(payload))
+        payload['Message'] = 'Tampered'
+        self.assertFalse(verify_ses_signature(payload))
     def test_parse_unknown_notification_type(self):
         """Test that unknown notification types are ignored."""
         message = {
