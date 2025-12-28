@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import re
 from datetime import datetime
 from functools import lru_cache
 from urllib.parse import urlparse
@@ -26,6 +27,11 @@ except ImportError:  # pragma: no cover - optional dependency
     padding = None
 
 
+# Strict regex for SNS certificate URLs
+# Must be sns.<region>.amazonaws.com where region follows AWS naming conventions
+_SNS_DOMAIN_REGEX = re.compile(r'^sns\.[a-z]{2}(-gov)?-[a-z]+-\d+\.amazonaws\.com$')
+
+
 def _is_valid_cert_url(cert_url: str) -> bool:
     try:
         parsed = urlparse(cert_url)
@@ -35,11 +41,13 @@ def _is_valid_cert_url(cert_url: str) -> bool:
     if parsed.scheme != 'https':
         return False
 
-    host = parsed.netloc.lower()
-    if not host.endswith('.amazonaws.com'):
+    if not _SNS_DOMAIN_REGEX.match(parsed.netloc.lower()):
         return False
 
-    return parsed.path.endswith('.pem')
+    if not parsed.path.endswith('.pem'):
+        return False
+
+    return True
 
 
 @lru_cache(maxsize=128)

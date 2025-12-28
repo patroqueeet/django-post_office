@@ -10,7 +10,7 @@ except ImportError:  # pragma: no cover - optional dependency
     serialization = None
 
 from post_office.models import RecipientDeliveryStatus
-from post_office.webhooks.ses import SESWebhookHandler, verify_ses_signature
+from post_office.webhooks.ses import SESWebhookHandler, verify_ses_signature, _is_valid_cert_url
 
 
 class SESWebhookHandlerTest(TestCase):
@@ -206,7 +206,7 @@ class SESSignatureVerificationTest(TestCase):
             'MessageId': 'mid-1',
             'Timestamp': '2024-01-01T00:00:00Z',
             'TopicArn': 'arn:aws:sns:us-east-1:123456789:ses-notifications',
-            'SigningCertURL': 'https://sns.us-east-1.amazonaws.com/cert.pem',
+            'SigningCertURL': 'https://sns.us-east-1.amazonaws.com/SimpleNotificationService-abc123def456.pem',
             'SignatureVersion': signature_version,
             'Signature': signature,
         }
@@ -224,6 +224,41 @@ class SESSignatureVerificationTest(TestCase):
         self.assertTrue(verify_ses_signature(payload))
         payload['Message'] = 'Tampered'
         self.assertFalse(verify_ses_signature(payload))
+
+    def test_cert_url_validation(self, mocked_cert):
+        """Test that certificate URL validation is strict."""
+        # Valid URLs
+        valid_urls = [
+            'https://sns.us-east-1.amazonaws.com/SimpleNotificationService-abc123.pem',
+            'https://sns.eu-west-2.amazonaws.com/cert.pem',
+            'https://sns.ap-southeast-1.amazonaws.com/any-name.pem',
+            'https://sns.us-gov-west-1.amazonaws.com/foo.pem',
+        ]
+        for url in valid_urls:
+            with self.subTest(url=url):
+                self.assertTrue(_is_valid_cert_url(url), f'Expected valid: {url}')
+
+        # Invalid URLs - must all be rejected
+        invalid_urls = [
+            # Wrong scheme
+            'http://sns.us-east-1.amazonaws.com/cert.pem',
+            # Non-SNS AWS hosts
+            'https://s3.us-east-1.amazonaws.com/cert.pem',
+            'https://ec2.us-east-1.amazonaws.com/cert.pem',
+            # Spoofed domains
+            'https://sns.us-east-1.amazonaws.com.evil.com/cert.pem',
+            'https://evil-amazonaws.com/cert.pem',
+            'https://sns.us-east-1.fake-amazonaws.com/cert.pem',
+            # Invalid path (not .pem)
+            'https://sns.us-east-1.amazonaws.com/../etc/passwd',
+            # Invalid region format
+            'https://sns.invalid.amazonaws.com/cert.pem',
+            'https://sns.amazonaws.com/cert.pem',
+        ]
+        for url in invalid_urls:
+            with self.subTest(url=url):
+                self.assertFalse(_is_valid_cert_url(url), f'Expected invalid: {url}')
+
     def test_parse_unknown_notification_type(self):
         """Test that unknown notification types are ignored."""
         message = {
