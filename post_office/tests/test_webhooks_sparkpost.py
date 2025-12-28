@@ -191,6 +191,30 @@ class SparkPostWebhookHandlerTest(TestCase):
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0].delivery_status, RecipientDeliveryStatus.UNSUBSCRIBED)
 
+    def test_parse_out_of_band_event(self):
+        """Test parsing out_of_band bounce event."""
+        payload = self._wrap_event('out_of_band', {
+            'rcpt_to': 'test@example.com',
+            'bounce_class': '10',  # Hard bounce
+        })
+        request = self._make_request(payload)
+        events = self.handler.parse_events(request)
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].delivery_status, RecipientDeliveryStatus.HARD_BOUNCED)
+
+    def test_parse_policy_rejection_event(self):
+        """Test parsing policy_rejection event."""
+        payload = self._wrap_event('policy_rejection', {
+            'rcpt_to': 'test@example.com',
+            'bounce_class': '25',  # Admin bounce
+        })
+        request = self._make_request(payload)
+        events = self.handler.parse_events(request)
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].delivery_status, RecipientDeliveryStatus.HARD_BOUNCED)
+
     # Bounce classification tests
 
     def test_parse_bounce_classification(self):

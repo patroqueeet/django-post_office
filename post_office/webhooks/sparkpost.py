@@ -174,7 +174,7 @@ class SparkPostWebhookHandler(BaseWebhookHandler):
         if event_type == 'delay':
             return RecipientDeliveryStatus.DEFERRED
 
-        if event_type == 'bounce':
+        if event_type in ('bounce', 'out_of_band', 'policy_rejection'):
             return self._get_bounce_status(event_data)
 
         if event_type == 'spam_complaint':
