@@ -51,6 +51,11 @@ POST_OFFICE = {
         'SES': {
             'VERIFY_SIGNATURE': True,
         },
+        'SPARKPOST': {
+            'USERNAME': 'test-user',
+            'PASSWORD': 'test-password',
+            'VERIFY_SIGNATURE': True,
+        },
     },
 }
 
