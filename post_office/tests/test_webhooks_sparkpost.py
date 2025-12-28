@@ -31,9 +31,9 @@ class SparkPostWebhookHandlerTest(TestCase):
             request.META['HTTP_AUTHORIZATION'] = auth_header
         return request
 
-    def _wrap_event(self, event_type, event_data, wrapper_key='message_event'):
+    def _wrap_event(self, event_type, event_data):
         """Wrap event data in SparkPost's msys structure."""
-        return [{'msys': {wrapper_key: {'type': event_type, **event_data}}}]
+        return [{'msys': {'message_event': {'type': event_type, **event_data}}}]
 
     # Signature verification tests
 
@@ -118,7 +118,7 @@ class SparkPostWebhookHandlerTest(TestCase):
         """Test parsing open event."""
         payload = self._wrap_event('open', {
             'rcpt_to': 'test@example.com',
-        }, wrapper_key='track_event')
+        })
         request = self._make_request(payload)
         events = self.handler.parse_events(request)
 
@@ -129,7 +129,7 @@ class SparkPostWebhookHandlerTest(TestCase):
         """Test parsing initial_open event."""
         payload = self._wrap_event('initial_open', {
             'rcpt_to': 'test@example.com',
-        }, wrapper_key='track_event')
+        })
         request = self._make_request(payload)
         events = self.handler.parse_events(request)
 
@@ -140,7 +140,7 @@ class SparkPostWebhookHandlerTest(TestCase):
         """Test parsing click event."""
         payload = self._wrap_event('click', {
             'rcpt_to': 'test@example.com',
-        }, wrapper_key='track_event')
+        })
         request = self._make_request(payload)
         events = self.handler.parse_events(request)
 
@@ -173,7 +173,7 @@ class SparkPostWebhookHandlerTest(TestCase):
         """Test parsing list_unsubscribe event."""
         payload = self._wrap_event('list_unsubscribe', {
             'rcpt_to': 'test@example.com',
-        }, wrapper_key='unsubscribe_event')
+        })
         request = self._make_request(payload)
         events = self.handler.parse_events(request)
 
@@ -184,7 +184,7 @@ class SparkPostWebhookHandlerTest(TestCase):
         """Test parsing link_unsubscribe event."""
         payload = self._wrap_event('link_unsubscribe', {
             'rcpt_to': 'test@example.com',
-        }, wrapper_key='unsubscribe_event')
+        })
         request = self._make_request(payload)
         events = self.handler.parse_events(request)
 
@@ -223,7 +223,7 @@ class SparkPostWebhookHandlerTest(TestCase):
         payload = [
             {'msys': {'message_event': {'type': 'injection', 'rcpt_to': 'user1@example.com'}}},
             {'msys': {'message_event': {'type': 'delivery', 'rcpt_to': 'user2@example.com'}}},
-            {'msys': {'track_event': {'type': 'open', 'rcpt_to': 'user3@example.com'}}},
+            {'msys': {'message_event': {'type': 'open', 'rcpt_to': 'user3@example.com'}}},
         ]
         request = self._make_request(payload)
         events = self.handler.parse_events(request)
@@ -232,6 +232,21 @@ class SparkPostWebhookHandlerTest(TestCase):
         self.assertEqual(events[0].delivery_status, RecipientDeliveryStatus.ACCEPTED)
         self.assertEqual(events[1].delivery_status, RecipientDeliveryStatus.DELIVERED)
         self.assertEqual(events[2].delivery_status, RecipientDeliveryStatus.OPENED)
+
+    def test_parse_results_wrapper(self):
+        """Test parsing payload with results wrapper."""
+        payload = {
+            'results': [
+                {'msys': {'message_event': {'type': 'injection', 'rcpt_to': 'user1@example.com'}}},
+                {'msys': {'message_event': {'type': 'delivery', 'rcpt_to': 'user2@example.com'}}},
+            ]
+        }
+        request = self._make_request(payload)
+        events = self.handler.parse_events(request)
+
+        self.assertEqual(len(events), 2)
+        self.assertEqual(events[0].delivery_status, RecipientDeliveryStatus.ACCEPTED)
+        self.assertEqual(events[1].delivery_status, RecipientDeliveryStatus.DELIVERED)
 
     def test_parse_empty_payload(self):
         """Test parsing empty payload."""

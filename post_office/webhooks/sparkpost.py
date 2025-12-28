@@ -92,6 +92,10 @@ class SparkPostWebhookHandler(BaseWebhookHandler):
         events = []
 
         # SparkPost sends an array of event wrappers
+        # Handle both raw array and {"results": [...]} format
+        if isinstance(payload, dict) and 'results' in payload:
+            payload = payload['results']
+
         if not isinstance(payload, list):
             logger.warning('SparkPost payload is not a list')
             return events
