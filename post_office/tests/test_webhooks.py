@@ -1,9 +1,9 @@
-from django.test import RequestFactory, TestCase, override_settings
+from django.test import TestCase, override_settings
 from django.utils import timezone
 
 from post_office.models import RecipientDeliveryStatus
 from post_office.settings import get_webhook_config
-from post_office.webhooks.base import STATUS_PRIORITY, BaseWebhookHandler, ESPEvent
+from post_office.webhooks.base import ESPEvent
 
 
 class ESPEventTest(TestCase):
