@@ -47,6 +47,16 @@ POST_OFFICE = {
     'MESSAGE_ID_ENABLED': True,
     'BATCH_DELIVERY_TIMEOUT': 2,
     'MESSAGE_ID_FQDN': 'example.com',
+    'WEBHOOKS': {
+        'SES': {
+            'VERIFY_SIGNATURE': True,
+        },
+        'SPARKPOST': {
+            'USERNAME': 'test-user',
+            'PASSWORD': 'test-password',
+            'VERIFY_SIGNATURE': True,
+        },
+    },
 }
 
 
