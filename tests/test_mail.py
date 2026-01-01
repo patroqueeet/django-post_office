@@ -9,7 +9,7 @@ from django.conf import settings
 from django.core import mail
 from django.core.exceptions import ValidationError
 from django.core.files.base import ContentFile
-from django.test import TestCase, TransactionTestCase
+from django.test import TransactionTestCase
 from django.test.utils import override_settings
 from django.utils import timezone
 
@@ -41,7 +41,7 @@ class ConnectionTestingBackend(mail.backends.base.BaseEmailBackend):
 
 class SlowTestBackend(mail.backends.base.BaseEmailBackend):
     """
-    An EmailBackend that sleeps for 10 seconds when sending messages
+    An EmailBackend that sleeps for 5 seconds when sending messages
     """
 
     def send_messages(self, email_messages):
@@ -582,7 +582,7 @@ class MailTest(TransactionTestCase):
         )
         start_time = timezone.now()
         # slow backend sleeps for 5 seconds, so we should get a timeout error since we set
-        # BATCH_DELIVERY_TIMEOUT timeout to 2 seconds in test_settings.py
+        # BATCH_DELIVERY_TIMEOUT timeout to 2 seconds in this test
         with self.assertRaises(TimeoutError):
             send_queued()
         end_time = timezone.now()
