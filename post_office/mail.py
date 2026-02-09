@@ -264,6 +264,7 @@ def get_queued() -> QuerySet[Email]:
     query = (Q(scheduled_time__lte=now) | Q(scheduled_time=None)) & (Q(expires_at__gt=now) | Q(expires_at=None))
     return (
         Email.objects.filter(query, status__in=[STATUS.queued, STATUS.requeued])
+        .select_for_update(skip_locked=True)
         .order_by(*get_sending_order())
         .prefetch_related('attachments')[: get_batch_size()]
     )
@@ -294,7 +295,7 @@ def send_queued(processes: int = 1, log_level: Optional[int] = None) -> tuple[in
     Uses select_for_update(skip_locked=True) to prevent concurrent workers
     from picking up the same emails (fixes duplicate send race condition).
     """
-    queued_emails = list(get_queued().select_for_update(skip_locked=True))
+    queued_emails = list(get_queued())
     attach_templates(queued_emails)
     total_sent, total_failed, total_requeued = 0, 0, 0
     total_email = len(queued_emails)

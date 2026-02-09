@@ -247,7 +247,8 @@ class Email(models.Model):
             elif log_level == 2:
                 self.logs.create(status=status, message=message, exception_type=exception_type)
 
-            email_sent.send(sender=Email, emails=[self])
+            if status == STATUS.sent:
+                email_sent.send(sender=Email, emails=[self])
         return status
 
     def clean(self):
