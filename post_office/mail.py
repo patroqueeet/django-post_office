@@ -493,7 +493,8 @@ def send_queued_mail_until_done(
                 if not db_connection.in_atomic_block:
                     db_connection.close()
 
-                if not get_queued().exists():
-                    break
+                with transaction.atomic():
+                    if not get_queued().exists():
+                        break
     except FileLocked:
         logger.info('Failed to acquire lock, terminating now.')
