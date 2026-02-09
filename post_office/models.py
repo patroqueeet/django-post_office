@@ -13,6 +13,7 @@ from django.utils import timezone
 
 from post_office import cache
 from post_office.fields import CommaSeparatedEmailField
+from post_office.signals import email_sent
 
 from .connections import connections
 from .logutils import setup_loghandlers
@@ -126,7 +127,8 @@ class Email(models.Model):
         if get_override_recipients():
             self.to = get_override_recipients()
 
-        if self.template is not None and self.context is not None:
+        # use template only if there is no message str yet given.
+        if not self.message and not self.html_message and self.template is not None and self.context is not None:
             engine = get_template_engine()
             subject = engine.from_string(self.template.subject).render(self.context)
             plaintext_message = engine.from_string(self.template.content).render(self.context)
@@ -245,6 +247,7 @@ class Email(models.Model):
             elif log_level == 2:
                 self.logs.create(status=status, message=message, exception_type=exception_type)
 
+            email_sent.send(sender=Email, emails=[self])
         return status
 
     def clean(self):
