@@ -20,6 +20,47 @@ Prevents email clients from threading unrelated emails together by not adding `I
 ### Atomic block safety
 Guards `db_connection.close()` calls with `not db_connection.in_atomic_block` checks to prevent crashes when running inside a transaction.
 
+## Contributing to this Fork
+
+### Making changes
+
+1. Clone the fork and make your changes on `master`:
+   ```bash
+   cd django-post_office
+   # make changes...
+   ```
+
+2. Run the tests (from the DARG cli container, since tests need Django):
+   ```bash
+   docker compose run --rm \
+     -v $(pwd):/code/django-post_office \
+     cli bash -c "pip install nh3 && cd /code/django-post_office && \
+       DJANGO_SETTINGS_MODULE=tests.test_settings \
+       python -m pytest tests/ -v --override-ini='pythonpath=.'"
+   ```
+
+3. Bump the version in `post_office/version.py` (use PEP 440 post-releases, e.g. `3.10.1.post2`).
+
+4. Commit, tag, and push:
+   ```bash
+   git commit -am "description of change"
+   git tag v3.10.1.post2
+   git push origin master --tags
+   ```
+
+5. Update `requirements.txt` in the DARG repo to pin the new tag:
+   ```
+   git+https://github.com/patroqueeet/django-post_office@v3.10.1.post2
+   ```
+
+### Pulling upstream updates
+
+1. Add upstream remote (once): `git remote add upstream https://github.com/ui/django-post_office.git`
+2. Fetch: `git fetch upstream`
+3. Create a fresh branch from the upstream tag: `git checkout -b rebase-upstream upstream/master`
+4. Cherry-pick or re-apply fork commits on top.
+5. Bump version to match new upstream base (e.g. `3.11.0.post1`), tag, and push.
+
 ---
 
 Django Post Office is a simple app to send and manage your emails in
