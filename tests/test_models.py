@@ -2,6 +2,7 @@ import json
 import os
 
 from datetime import datetime, timedelta
+from unittest.mock import patch
 
 from django.conf import settings as django_settings, settings
 from django.core import mail
@@ -368,3 +369,59 @@ class ModelTest(TestCase):
         deserialized_objects = serializers.deserialize('json', data, use_natural_primary_keys=True)
         list(deserialized_objects)[0].save()
         self.assertEqual(EmailTemplate.objects.count(), 1)
+
+    @patch('post_office.signals.email_sent.send')
+    def test_dispatch_email_sent_signal_on_success(self, mock_signal):
+        """
+        Ensure email_sent signal fires only when dispatch succeeds.
+        """
+        email = Email.objects.create(
+            to=['to@example.com'],
+            from_email='from@example.com',
+            subject='Test dispatch signal',
+            message='Message',
+            backend_alias='locmem',
+        )
+        email.dispatch()
+        mock_signal.assert_called_once_with(sender=Email, emails=[email])
+
+    @patch('post_office.signals.email_sent.send')
+    def test_dispatch_email_sent_signal_not_on_failure(self, mock_signal):
+        """
+        Ensure email_sent signal does NOT fire when dispatch fails.
+        """
+        email = Email.objects.create(
+            to=['to@example.com'],
+            from_email='from@example.com',
+            subject='Test dispatch signal fail',
+            message='Message',
+            backend_alias='error',
+        )
+        email.dispatch()
+        self.assertEqual(email.status, STATUS.failed)
+        mock_signal.assert_not_called()
+
+    def test_prepare_email_message_explicit_content_over_template(self):
+        """
+        Ensure that explicit message/html_message takes precedence over template
+        when both are set (template override guard).
+        """
+        template = EmailTemplate.objects.create(
+            subject='Template Subject',
+            content='Template Content',
+            html_content='<p>Template HTML</p>',
+        )
+        email = Email.objects.create(
+            to=['to@example.com'],
+            from_email='from@example.com',
+            subject='Explicit Subject',
+            message='Explicit Content',
+            html_message='<p>Explicit HTML</p>',
+            template=template,
+            context={'name': 'test'},
+        )
+        msg = email.prepare_email_message()
+        # Explicit content should be used, not template
+        self.assertEqual(msg.subject, 'Explicit Subject')
+        self.assertEqual(msg.body, 'Explicit Content')
+        self.assertEqual(msg.alternatives[0][0], '<p>Explicit HTML</p>')

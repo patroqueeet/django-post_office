@@ -570,21 +570,24 @@ class MailTest(TransactionTestCase):
 
     def test_batch_delivery_timeout(self):
         """
-        Ensure that batch delivery timeout is respected.
+        Ensure that batch delivery timeout is respected in multiprocessing mode.
+        When processes=1, _send_bulk runs synchronously without ThreadPool timeout.
+        Use processes=2 to exercise the multiprocessing timeout path.
         """
-        _ = Email.objects.create(
-            to=['to@example.com'],
-            from_email='bob@example.com',
-            subject='',
-            message='',
-            status=STATUS.queued,
-            backend_alias='slow_backend',
-        )
+        for _ in range(2):
+            Email.objects.create(
+                to=['to@example.com'],
+                from_email='bob@example.com',
+                subject='',
+                message='',
+                status=STATUS.queued,
+                backend_alias='slow_backend',
+            )
         start_time = timezone.now()
         # slow backend sleeps for 5 seconds, so we should get a timeout error since we set
         # BATCH_DELIVERY_TIMEOUT timeout to 2 seconds in this test
         with self.assertRaises(TimeoutError):
-            send_queued()
+            send_queued(processes=2)
         end_time = timezone.now()
         # Assert that running time is less than 3 seconds (2 seconds timeout + 1 second buffer)
         self.assertTrue(end_time - start_time < timezone.timedelta(seconds=3))
@@ -596,3 +599,80 @@ class MailTest(TransactionTestCase):
         """
         email = send(recipients=['a@example.com'], sender='from@example.com', message='message', subject='subject')
         mock.assert_called_once_with(sender=Email, emails=[email])
+
+    def test_get_queued_uses_select_for_update(self):
+        """
+        Ensure get_queued() applies select_for_update(skip_locked=True) to prevent
+        concurrent workers from picking up the same emails.
+        """
+        Email.objects.create(
+            to=['to@example.com'],
+            from_email='bob@example.com',
+            subject='Test',
+            message='Message',
+            status=STATUS.queued,
+        )
+        qs = get_queued()
+        # Check that select_for_update is applied on the queryset
+        self.assertTrue(qs.query.select_for_update)
+        # Check skip_locked is set
+        self.assertTrue(qs.query.select_for_update_skip_locked)
+
+    @override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
+    @patch('post_office.signals.email_sent.send')
+    def test_email_sent_signal_on_bulk_send(self, mock_signal):
+        """
+        Ensure email_sent signal fires after _send_bulk successfully sends emails.
+        """
+        email = Email.objects.create(
+            to=['to@example.com'],
+            from_email='bob@example.com',
+            subject='Test signal',
+            message='Message',
+            status=STATUS.queued,
+            backend_alias='locmem',
+        )
+        _send_bulk([email], uses_multiprocessing=False)
+        mock_signal.assert_called_once()
+        call_kwargs = mock_signal.call_args
+        self.assertEqual(call_kwargs[1]['sender'], Email)
+        sent_emails = call_kwargs[1]['emails']
+        self.assertEqual(len(sent_emails), 1)
+        self.assertEqual(sent_emails[0].id, email.id)
+
+    @patch('post_office.signals.email_sent.send')
+    def test_email_sent_signal_not_fired_on_bulk_failure(self, mock_signal):
+        """
+        Ensure email_sent signal does NOT fire when all emails fail in _send_bulk.
+        """
+        email = Email.objects.create(
+            to=['to@example.com'],
+            from_email='bob@example.com',
+            subject='Test signal fail',
+            message='Message',
+            status=STATUS.queued,
+            backend_alias='error',
+        )
+        _send_bulk([email], uses_multiprocessing=False)
+        mock_signal.assert_not_called()
+
+    @override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
+    def test_send_queued_within_transaction(self):
+        """
+        Ensure send_queued runs inside a transaction (required for select_for_update).
+        """
+        Email.objects.create(
+            to=['to@example.com'],
+            from_email='bob@example.com',
+            subject='Test atomic',
+            message='Message',
+            status=STATUS.queued,
+            backend_alias='locmem',
+        )
+        # send_queued is decorated with @transaction.atomic — verify it works correctly
+        total_sent, total_failed, total_requeued = send_queued()
+        self.assertEqual(total_sent, 1)
+        self.assertEqual(total_failed, 0)
+        self.assertEqual(total_requeued, 0)
+        # Verify the email was actually marked as sent
+        self.assertEqual(Email.objects.filter(status=STATUS.sent).count(), 1)

@@ -413,7 +413,8 @@ def _send_bulk(
     # Update statuses of sent emails
     email_ids = [email.id for email in sent_emails]
     Email.objects.filter(id__in=email_ids).update(status=STATUS.sent, last_updated=timezone.now())
-    email_sent.send(sender=Email, emails=sent_emails)
+    if sent_emails:
+        email_sent.send(sender=Email, emails=sent_emails)
 
     # Update statuses and conditionally requeue failed emails
     num_failed, num_requeued = 0, 0
