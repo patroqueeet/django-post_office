@@ -1,4 +1,26 @@
-# Django Post Office
+# Django Post Office (DARG Fork)
+
+> **This is a fork of [ui/django-post_office](https://github.com/ui/django-post_office)** maintained at [patroqueeet/django-post_office](https://github.com/patroqueeet/django-post_office).
+> Based on upstream v3.10.1 with the following changes:
+
+## Fork Changes
+
+### Race condition fix: `select_for_update(skip_locked=True)`
+Without row-level locking, concurrent celery workers calling `send_queued_mail` can pick up the same emails from `get_queued()`, causing duplicate sends. This was confirmed in production with emails sent twice within 134ms by different worker PIDs. The fix adds `select_for_update(skip_locked=True)` to the `get_queued()` queryset and wraps `send_queued()` in `@transaction.atomic`. Upstream issue: [#248](https://github.com/ui/django-post_office/issues/248) (not merged due to MySQL compatibility — not relevant here, we use PostgreSQL).
+
+### `email_sent` signal
+Adds an `email_sent` Django signal (alongside the existing `email_queued`) that fires after emails are successfully sent — both in `Email.dispatch()` (single send) and `_send_bulk()` (batch send). The signal only fires on success, not on failure.
+
+### Template override guard
+When an `Email` has both explicit `message`/`html_message` content AND a `template` assigned, the explicit content takes precedence. This prevents template re-rendering from overwriting content that was already rendered at queue time.
+
+### Disable email threading headers
+Prevents email clients from threading unrelated emails together by not adding `In-Reply-To` / `References` headers.
+
+### Atomic block safety
+Guards `db_connection.close()` calls with `not db_connection.in_atomic_block` checks to prevent crashes when running inside a transaction.
+
+---
 
 Django Post Office is a simple app to send and manage your emails in
 Django. Some awesome features are:
