@@ -6,7 +6,7 @@ from typing import Any, Optional
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.db import connection as db_connection
+from django.db import connection as db_connection, transaction
 from django.db.models import Q, QuerySet
 from django.template import Context, Template
 from django.utils import timezone
@@ -27,7 +27,7 @@ from .settings import (
     get_sending_order,
     get_threads_per_process,
 )
-from .signals import email_queued
+from .signals import email_queued, email_sent
 from .utils import (
     create_attachments,
     get_email_template,
@@ -287,11 +287,14 @@ def attach_templates(emails: list[Email]) -> None:
             email.template = template_map.get(email.template_id)
 
 
+@transaction.atomic
 def send_queued(processes: int = 1, log_level: Optional[int] = None) -> tuple[int, int, int]:
     """
-    Sends out all queued mails that has scheduled_time less than now or None
+    Sends out all queued mails that has scheduled_time less than now or None.
+    Uses select_for_update(skip_locked=True) to prevent concurrent workers
+    from picking up the same emails (fixes duplicate send race condition).
     """
-    queued_emails = list(get_queued())
+    queued_emails = list(get_queued().select_for_update(skip_locked=True))
     attach_templates(queued_emails)
     total_sent, total_failed, total_requeued = 0, 0, 0
     total_email = len(queued_emails)
@@ -352,7 +355,7 @@ def _send_bulk(
     # Multiprocessing does not play well with database connection
     # Fix: Close connections on forking process
     # https://groups.google.com/forum/#!topic/django-users/eCAIY9DAfG0
-    if uses_multiprocessing:
+    if uses_multiprocessing and not db_connection.in_atomic_block:
         db_connection.close()
 
     if log_level is None:
@@ -379,18 +382,26 @@ def _send_bulk(
             logger.exception('Failed to prepare email #%d' % email.id)
             failed_emails.append((email, e))
 
-    number_of_threads = min(get_threads_per_process(), email_count)
-    with ThreadPool(number_of_threads) as pool:
-        results = []
+    if uses_multiprocessing:
+        number_of_threads = min(get_threads_per_process(), email_count)
+        with ThreadPool(number_of_threads) as pool:
+            results = []
+            for email in emails_to_send:
+                results.append((email, pool.apply_async(_send_email, args=(email, log_level))))
+
+            timeout = get_batch_delivery_timeout()
+
+            # Wait for all tasks to complete with a timeout
+            # The get method is used with a timeout to wait for each result
+            for email, result in results:
+                success, exception = result.get(timeout=timeout)
+                if success:
+                    sent_emails.append(email)
+                else:
+                    failed_emails.append((email, exception))
+    else:
         for email in emails_to_send:
-            results.append((email, pool.apply_async(_send_email, args=(email, log_level))))
-
-        timeout = get_batch_delivery_timeout()
-
-        # Wait for all tasks to complete with a timeout
-        # The get method is used with a timeout to wait for each result
-        for email, result in results:
-            success, exception = result.get(timeout=timeout)
+            success, exception = _send_email(email, log_level)
             if success:
                 sent_emails.append(email)
             else:
@@ -401,6 +412,7 @@ def _send_bulk(
     # Update statuses of sent emails
     email_ids = [email.id for email in sent_emails]
     Email.objects.filter(id__in=email_ids).update(status=STATUS.sent, last_updated=timezone.now())
+    email_sent.send(sender=Email, emails=sent_emails)
 
     # Update statuses and conditionally requeue failed emails
     num_failed, num_requeued = 0, 0
@@ -476,7 +488,8 @@ def send_queued_mail_until_done(
                     raise
 
                 # Close DB connection to avoid multiprocessing errors
-                db_connection.close()
+                if not db_connection.in_atomic_block:
+                    db_connection.close()
 
                 if not get_queued().exists():
                     break
