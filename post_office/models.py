@@ -248,7 +248,19 @@ class Email(models.Model):
                 self.logs.create(status=status, message=message, exception_type=exception_type)
 
             if status == STATUS.sent:
-                email_sent.send(sender=Email, emails=[self])
+                # status was already saved above; use send_robust so a failing
+                # receiver can't propagate and (inside an outer transaction)
+                # roll back that save -> which would re-send an already-sent
+                # email. Log receiver failures instead.
+                for receiver, response in email_sent.send_robust(sender=Email, emails=[self]):
+                    if isinstance(response, Exception):
+                        logger.error(
+                            'email_sent receiver %r failed after successful delivery '
+                            'of email #%d; sent status preserved to prevent re-send',
+                            receiver,
+                            self.id,
+                            exc_info=response,
+                        )
         return status
 
     def clean(self):

@@ -15,6 +15,7 @@ from django.utils import timezone
 
 from post_office.mail import _send_bulk, attach_templates, create, get_queued, send, send_many, send_queued
 from post_office.models import PRIORITY, STATUS, Attachment, Email, EmailTemplate
+from post_office.signals import email_sent
 from post_office.settings import (
     get_batch_size,
     get_log_level,
@@ -619,11 +620,12 @@ class MailTest(TransactionTestCase):
         self.assertTrue(qs.query.select_for_update_skip_locked)
 
     @override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
-    @patch('post_office.signals.email_sent.send')
+    @patch('post_office.signals.email_sent.send_robust')
     def test_email_sent_signal_on_bulk_send(self, mock_signal):
         """
         Ensure email_sent signal fires after _send_bulk successfully sends emails.
         """
+        mock_signal.return_value = []
         email = Email.objects.create(
             to=['to@example.com'],
             from_email='bob@example.com',
@@ -640,7 +642,7 @@ class MailTest(TransactionTestCase):
         self.assertEqual(len(sent_emails), 1)
         self.assertEqual(sent_emails[0].id, email.id)
 
-    @patch('post_office.signals.email_sent.send')
+    @patch('post_office.signals.email_sent.send_robust')
     def test_email_sent_signal_not_fired_on_bulk_failure(self, mock_signal):
         """
         Ensure email_sent signal does NOT fire when all emails fail in _send_bulk.
@@ -655,6 +657,38 @@ class MailTest(TransactionTestCase):
         )
         _send_bulk([email], uses_multiprocessing=False)
         mock_signal.assert_not_called()
+
+    @override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
+    def test_sent_status_survives_failing_email_sent_receiver(self):
+        """
+        Regression: a receiver raising must NOT roll back the status=sent update
+        inside send_queued's transaction. Otherwise the (already delivered)
+        email stays queued and is re-sent on the next run. send_robust must
+        swallow the receiver error and keep the sent status durable.
+        """
+        email = Email.objects.create(
+            to=['to@example.com'],
+            from_email='bob@example.com',
+            subject='Test robust',
+            message='Message',
+            status=STATUS.queued,
+            backend_alias='locmem',
+        )
+
+        def boom(sender, **kwargs):
+            raise ValueError('receiver intentionally fails')
+
+        email_sent.connect(boom, sender=Email)
+        try:
+            # must not raise despite the failing receiver
+            total_sent, total_failed, total_requeued = send_queued()
+        finally:
+            email_sent.disconnect(boom, sender=Email)
+
+        self.assertEqual(total_sent, 1)
+        email.refresh_from_db()
+        self.assertEqual(email.status, STATUS.sent)
+        self.assertEqual(Email.objects.filter(status=STATUS.queued).count(), 0)
 
     @override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
     def test_send_queued_within_transaction(self):

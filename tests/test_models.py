@@ -370,11 +370,12 @@ class ModelTest(TestCase):
         list(deserialized_objects)[0].save()
         self.assertEqual(EmailTemplate.objects.count(), 1)
 
-    @patch('post_office.signals.email_sent.send')
+    @patch('post_office.signals.email_sent.send_robust')
     def test_dispatch_email_sent_signal_on_success(self, mock_signal):
         """
         Ensure email_sent signal fires only when dispatch succeeds.
         """
+        mock_signal.return_value = []
         email = Email.objects.create(
             to=['to@example.com'],
             from_email='from@example.com',
@@ -385,7 +386,7 @@ class ModelTest(TestCase):
         email.dispatch()
         mock_signal.assert_called_once_with(sender=Email, emails=[email])
 
-    @patch('post_office.signals.email_sent.send')
+    @patch('post_office.signals.email_sent.send_robust')
     def test_dispatch_email_sent_signal_not_on_failure(self, mock_signal):
         """
         Ensure email_sent signal does NOT fire when dispatch fails.
