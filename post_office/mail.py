@@ -423,8 +423,7 @@ def _send_bulk(
         for receiver, response in email_sent.send_robust(sender=Email, emails=sent_emails):
             if isinstance(response, Exception):
                 logger.error(
-                    'email_sent receiver %r failed after successful delivery; '
-                    'sent status preserved to prevent re-send',
+                    'email_sent receiver %r failed after successful delivery; sent status preserved to prevent re-send',
                     receiver,
                     exc_info=response,
                 )
