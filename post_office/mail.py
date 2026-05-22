@@ -414,7 +414,19 @@ def _send_bulk(
     email_ids = [email.id for email in sent_emails]
     Email.objects.filter(id__in=email_ids).update(status=STATUS.sent, last_updated=timezone.now())
     if sent_emails:
-        email_sent.send(sender=Email, emails=sent_emails)
+        # send_queued() wraps this whole batch in a single transaction so the
+        # select_for_update locks are held for the duration. A receiver that
+        # raises would propagate out of that transaction and roll back the
+        # status=sent update above, leaving the (already delivered) emails
+        # queued -> they get re-sent on the next run. Use send_robust so a
+        # broken receiver can never revert a successful delivery; log instead.
+        for receiver, response in email_sent.send_robust(sender=Email, emails=sent_emails):
+            if isinstance(response, Exception):
+                logger.error(
+                    'email_sent receiver %r failed after successful delivery; sent status preserved to prevent re-send',
+                    receiver,
+                    exc_info=response,
+                )
 
     # Update statuses and conditionally requeue failed emails
     num_failed, num_requeued = 0, 0
